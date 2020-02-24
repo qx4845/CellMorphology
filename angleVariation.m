@@ -1,264 +1,236 @@
+% ATTENTION: This script requires that 'tensorCollector.m' be run with its 
+% output successfully saved before executing this script. 
+% 
+% This script uses the output file resulting from 'tensorCollector.m': 
+% specifically the string corresponding to the version suffix of the 
+% 'tensorCollector.m' output file to load this file and incorporate the 
+% contained inertia tensors. 
+%
+% First, this script calculates the Angular Momentum (L) for every cell in 
+% every frame at each angle in a prescribed range of angles.  Resulting 
+% angular momenta are stored in the 'theta_vs_time' variable and plotted in 
+% Subplot #1 as a heatmap where the color corresponds to the average 
+% angular momentum for a particular time and rotation angle. 
+%
+% Next, the eigenvalues and eigenvectors are also calculated from the
+% loaded inertia tensors and are used to deteremine the angles which the
+% major and minor axes of each cell form with the positive x-axis (a.k.a.
+% the extreme angles of elogation, or extreme directions). These results
+% are plotted in Subplot #2.
+%
+% Then, the side-lengths, in pixels, of the equivalent rectangle that 
+% corresponds to each cell are computed according to the formulas derived
+% here: https://www.dropbox.com/s/w6l65mm77n8dau8/AMequivalentRectangleMeasuremts.pdf?dl=0
+%
+% Finally, the extreme directions are averaged over the entire movie length
+% to determine the cardinal axes of the sample. The cardinal axes of the
+% microscope (say, 0 and 90 degrees) are intended to align with those of
+% the sample, but this is often not the case. To this end, this script also
+% outputs the cardinal axes of the movie. For example, if the cardinal axes
+% of the sample are rotated 5 degrees counterclockwise from those of the
+% microscope viewing window, then the sample axes would be 5 and 95
+% degrees, and the 'cardinalAxesOffset' variable below would equal [5; 95].
+%
+% All measurements are averaged in time over a frame-window of width 'ww' 
+% defined below. Relevant results are saved and plotted, with several
+% alternative plot configurations left commented out for future variations.
+
+%% Preparation:
+% Clear workspace and start timer
 clear all;
 tic;
 
-movieName = strcat('r3');
-version = strcat(movieName, '_v24');
+% Specify version for resulting file name suffix
+movieName = strcat('c3');
+version = strcat(movieName, '_4');
 
-tensorCollection_version = strcat(movieName, '_v12');
+% Specify version of 'tensorCollection' to be loaded
+%%% ('tensorCollector.m' must be executed before running this script.
+%%% This will collect the inertia tensors required by this script.)
+tensorCollection_version = strcat(movieName, '_v003');
 
+% Specify angular resolution for resulting plot in degrees
 thetaInc = 5;
-% thetas = ((0:thetaInc:90)/360)*2*pi;
-% full_thetas = ((0:thetaInc:180)/360)*2*pi;
-thetas = ((0:thetaInc:180)/360)*2*pi;
 
-inertiaTensorCollection = load(strcat('/Users/stephenwedekind/Dropbox/School/RESEARCH/Loerke_group/Cell_Measurement/InertiaTensor/InertiaTensorCollection_', tensorCollection_version, '.mat'));
-% inertiaTensorCollection = load(strcat('/Users/stephenwedekind/Dropbox/School/RESEARCH/Loerke_group/Cell_Measurement/InertiaTensor/InertiaTensorCollection_', tensorCollection_version, '_intermediate2.mat'));
+% Specify limits of desired angle range in degrees
+startAngle = 0;
+stopAngle = 180;
 
+% Create vector of angles from 'startAngle' to 'stopAngle' degrees in 
+% increments of 'thetaInc' degrees, and then convert the entire vector to 
+% units of RADIANS:
+thetas = ((startAngle:thetaInc:stopAngle)/360)*2*pi;
+
+% Load the inertia tensor collection version that is specified above
+inertiaTensorCollection = load(strcat('InertiaTensorCollection_', tensorCollection_version, '.mat'));
+% inertiaTensorCollection = load(strcat('/Users/stephenwedekind/Dropbox/School/RESEARCH/Loerke_group/Cell_Measurement/InertiaTensor/InertiaTensorCollection_', tensorCollection_version, '.mat'));
+
+% Get numbers of frames and cells from imported data
 numFrames = size(inertiaTensorCollection.inertiaTensorCollection, 1);
-% numFrames = 250;
 numCells = size(inertiaTensorCollection.inertiaTensorCollection{end,1}, 1) - 1;
-% theta_vs_time = NaN(length(thetas), numFrames, 2);
+
+% Create containers for storing new data to be generated
 theta_vs_time = NaN(length(thetas), numFrames, 1);
 angularMomenta = NaN(numCells, numFrames, 3);
 maxOrientationAngles = NaN(2, numFrames);
-% max_combo_range = NaN(length(thetas), numFrames);
-% min_combo_range = NaN(length(thetas), numFrames);
 equivalentRectangleMeasurements = NaN(numCells, numFrames, 3);
 extremeDirections = NaN(numCells, numFrames, 2);
 celAvgExtremeDirections = NaN(2, numFrames);
 cellCounts = NaN(1, numFrames);
 
+% Collect eigenvalues and eigenvectors for each intertia tensor in the
+% collection
 [ eigenVals, eigenVecs ] = eigenCollector( tensorCollection_version );
 
-ww = 10; % Window Width in units of frames
+% Specify window width (ww) for rolling average in units of frames
+ww = 10;
+
+%% Compute and collect angles of extreme elongation and associated statistics:
 for frameNum = 1:numFrames
     cellCounts(1, frameNum) = length(inertiaTensorCollection.inertiaTensorCollection{frameNum, 1});
+    
+    % For case before window width has been reached
     if frameNum <= ww
+        % At this frame, go through all angles and find associated angular momenta
         for theta = 1:length(thetas)
+            % Create a unit vector pointing forming an angle theta with the
+            % positive x-axis
             unitVec = [cos(thetas(theta)); sin(thetas(theta))];
+            
+            % Cycle thorugh all cells in this frame
             for cellNum = 1:length(inertiaTensorCollection.inertiaTensorCollection{frameNum, 1})
+                
+                % Get relevant tensor from tensor collection
                 tensor = inertiaTensorCollection.inertiaTensorCollection{frameNum,1}(cellNum);
+                
+                % Compute Angular Momentum for this cell's tensor at this
+                % angle
                 angularMomentum = tensor{1} * unitVec;
                 % if unitVec is composed of angular frequency components, then
                 % angularMomentum is the angular momentum "L" in particular direction.
+                
+                % Organize these angular momentua into collection
                 angularMomenta(cellNum, frameNum, 1) = angularMomentum(1);
                 angularMomenta(cellNum, frameNum, 2) = angularMomentum(2);
                 angularMomenta(cellNum, frameNum, 3) = sqrt(angularMomentum(1)^2 + angularMomentum(2)^2);
             end
-    %         theta_vs_time(theta, frameNum, 1) = nanmean(inertiaMeasurements(:, frameNum, 1));
-    %         theta_vs_time(theta, frameNum, 2) = nanmean(inertiaMeasurements(:, frameNum, 2));
+            
+            % Record cell-averaged angular momenta for each angle and fram
             theta_vs_time(theta, frameNum, 1) = nanmean(angularMomenta(:, frameNum, 3));
         end
 
-        for cellNum = 1:length(inertiaTensorCollection.inertiaTensorCollection{frameNum, 1}) -1
-    %         [ eigenVals, eigenVecs ] = eigenCollector( tensorCollection_version );
-            equivalentRectangleMeasurements(cellNum, frameNum, 3) = nthroot(abs(nanmean(eigenVals(cellNum, 1:frameNum, 2), 2) / nanmean(eigenVals(cellNum, 1:frameNum, 1), 2)), 2); % 'e': elongation factor (a/b)
-            equivalentRectangleMeasurements(cellNum, frameNum, 1) = nthroot(abs( 18 * nanmean(eigenVals(cellNum, 1:frameNum, 2), 2) / nanmean(equivalentRectangleMeasurements(cellNum, 1:frameNum, 3), 2) ), 4); % 'a': length along long axis
-            equivalentRectangleMeasurements(cellNum, frameNum, 2) = nthroot(abs( 18 * nanmean(eigenVals(cellNum, 1:frameNum, 1), 2) / nanmean(equivalentRectangleMeasurements(cellNum, 1:frameNum, 3), 2) ), 4); % 'b': length along short axis
-%             equivalentRectangleMeasurements(cellNum, frameNum, 2) = nthroot(( 18 * nanmean(eigenVals(cellNum, 1:frameNum, 1), 2) / (nanmean(equivalentRectangleMeasurements(cellNum, 1:frameNum, 3), 2) * nanmean(equivalentRectangleMeasurements(cellNum, 1:frameNum, 1), 2)^2) ), 4); % 'b': length along short axis
+        % Once the angular momenta for this frame are calculated, proceed
+        % to cycle through each cell in this frame and use the eigenvalues
+        % and eigenvectors to determine the extreme elongation directions
+        % of each cell in this frame. 
+        for cellNum = 1:length(inertiaTensorCollection.inertiaTensorCollection{frameNum, 1})
+            
+            % Calculate equivalent rectangle measurements in pixels
+            % according to the prescription outlined here:
+            % https://www.dropbox.com/s/w6l65mm77n8dau8/AMequivalentRectangleMeasuremts.pdf?dl=0
+            equivalentRectangleMeasurements(cellNum, frameNum, 3) = nthroot(mean(abs(eigenVals(cellNum, 1:frameNum, 2)), 2) / mean(abs(eigenVals(cellNum, 1:frameNum, 1)), 2), 2); % 'e': elongation factor (a/b)
+            equivalentRectangleMeasurements(cellNum, frameNum, 1) = nthroot((18 * mean(abs(eigenVals(cellNum, 1:frameNum, 2)), 2) / equivalentRectangleMeasurements(cellNum, frameNum, 3)) , 4); % 'a': length along long axis
+            equivalentRectangleMeasurements(cellNum, frameNum, 2) = nthroot((18 * mean(abs(eigenVals(cellNum, 1:frameNum, 1)), 2) / equivalentRectangleMeasurements(cellNum, frameNum, 3)) , 4); % 'b': length along short axis
+%             equivalentRectangleMeasurements(cellNum, frameNum, 2) = nthroot((18 * mean(abs(eigenVals(cellNum, 1:frameNum, 1)), 2) / (equivalentRectangleMeasurements(cellNum, frameNum, 3) * equivalentRectangleMeasurements(cellNum, frameNum, 1)^2)) , 2); % 'b': length along short axis
 
-%             eVec = eigenVecs{cellNum, frameNum};
+            % Create temporary variable to store extreme direction results
+            % for this early (pre-window-width) averaging
             eD = NaN(2, frameNum);
+            
+            % Cycle through frames that have already been completed (for
+            % this cell only) and compute extreme directions for displaying
+            % this frame's average extreme elongations. 
             for wFrame = 1:frameNum
                 eVec = eigenVecs{cellNum, wFrame};
-%                 eD(1, wFrame) = atan2(eVec(1, 2), eVec(2, 2)) * (360/(2*pi));
-                a = real([eVec(1, 2), eVec(2, 2), 0]);
+                a = [eVec(1, 2), eVec(2, 2), 0];
                 b = [1, 0, 0];
                 eD(1, wFrame) = atan2(norm(cross(a,b)), dot(a,b)) * (360/(2*pi));
-                c = real([eVec(1, 1), eVec(2, 1), 0]);
+                c = [eVec(1, 1), eVec(2, 1), 0];
                 d = [1, 0, 0];
                 eD(2, wFrame) = atan2(norm(cross(c,d)), dot(c,d)) * (360/(2*pi));
-%                 eD(1, wFrame) = atan2(eVec(2, 2), eVec(1, 2)) * (360/(2*pi)) + 90;
-%                 eD(1, wFrame) = atan2(eVec(1, 1), eVec(2, 1)) * (360/(2*pi)) + 90;
-%                 extremeDirections(cellNum, frameNum, 1) = atan2(eVec(1, 2), eVec(2, 2)) * (360/(2*pi)) + 90;
-%         %         extremeDirections(cellNum, frameNum, 2) = atan2(eVec(1, 1), eVec(2, 1)) * (360/(2*pi)) + 90;
             end
+            
+            % Average each cell's extreme directions over that cell's
+            % history since the start of the movie.
             extremeDirections(cellNum, frameNum, 1) = nanmean(eD(1,:), 2);
             extremeDirections(cellNum, frameNum, 2) = nanmean(eD(2,:), 2);
-%             extremeDirections(cellNum, frameNum, 1) = atan2(eVec(1, 1), eVec(2, 1)) * (360/(2*pi)) + 90;
-% %             extremeDirections(cellNum, frameNum, 1) = atan2(eVec(1, 2), eVec(2, 2)) * (360/(2*pi)) + 90;
         end
+        
+    % For general case averaging over window width
     else
+        
+        % At this frame, go through all angles and find associated angular momenta
         for theta = 1:length(thetas)
+            
+            % Create a unit vector pointing forming an angle theta with the
+            % positive x-axis
             unitVec = [cos(thetas(theta)); sin(thetas(theta))];
-            for cellNum = 1:length(inertiaTensorCollection.inertiaTensorCollection{frameNum, 1}) - 1
+            
+            % Cycle thorugh all cells in this frame
+            for cellNum = 1:length(inertiaTensorCollection.inertiaTensorCollection{frameNum, 1})
+                
+                % Get relevant tensor from tensor collection
                 tensor = inertiaTensorCollection.inertiaTensorCollection{frameNum,1}(cellNum);
+                
+                % Compute the angular momentum for this cell's inertia 
+                % tensor at this angle
                 angularMomentum = tensor{1} * unitVec;
                 % if unitVec is composed of angular frequency components, then
                 % angularMomentum is the angular momentum "L" in particular direction.
+                
+                % Organize these angular momentua into a collection
                 angularMomenta(cellNum, frameNum, 1) = angularMomentum(1);
                 angularMomenta(cellNum, frameNum, 2) = angularMomentum(2);
                 angularMomenta(cellNum, frameNum, 3) = sqrt(angularMomentum(1)^2 + angularMomentum(2)^2);
             end
-    %         theta_vs_time(theta, frameNum, 1) = nanmean(inertiaMeasurements(:, frameNum, 1));
-    %         theta_vs_time(theta, frameNum, 2) = nanmean(inertiaMeasurements(:, frameNum, 2));
+
+            % Record cell-averaged angular momenta for each angle and frame
             theta_vs_time(theta, frameNum, 1) = nanmean(angularMomenta(:, frameNum, 3));
         end
 
-        for cellNum = 1:min(cellCounts(1, frameNum - ww: frameNum)) - 1
-    %         [ eigenVals, eigenVecs ] = eigenCollector( tensorCollection_version );
-            equivalentRectangleMeasurements(cellNum, frameNum, 3) = nthroot(abs(nanmean(eigenVals(cellNum, frameNum - ww: frameNum, 2), 2) / nanmean(eigenVals(cellNum, frameNum - ww: frameNum, 1), 2)), 2); % 'e': elongation factor (a/b)
-            equivalentRectangleMeasurements(cellNum, frameNum, 1) = nthroot(abs(18 * nanmean(eigenVals(cellNum, frameNum - ww: frameNum, 2), 2) / nanmean(equivalentRectangleMeasurements(cellNum, frameNum - ww: frameNum, 3), 2) ), 4); % 'a': length along long axis
-            equivalentRectangleMeasurements(cellNum, frameNum, 2) = nthroot(abs(18 * nanmean(eigenVals(cellNum, frameNum - ww: frameNum, 1), 2) / nanmean(equivalentRectangleMeasurements(cellNum, frameNum - ww: frameNum, 3), 2) ), 4); % 'b': length along short axis
-%             equivalentRectangleMeasurements(cellNum, frameNum, 2) = nthroot((18 * nanmean(eigenVals(cellNum, frameNum - ww: frameNum, 1), 2) / (nanmean(equivalentRectangleMeasurements(cellNum, frameNum - ww: frameNum, 3), 2) * nanmean(equivalentRectangleMeasurements(cellNum, frameNum - ww: frameNum, 1), 2)^2) ), 4); % 'b': length along short axis
+        % Once the angular momenta for this frame are calculated, proceed
+        % to cycle through each cell in this frame and use the eigenvalues
+        % and eigenvectors to determine the extreme elongation directions
+        % of each cell in this frame. 
+        for cellNum = 1:min(cellCounts(1, frameNum - ww: frameNum))
 
-%             eVec = eigenVecs{cellNum, frameNum};
+            % Calculate equivalent rectangle measurements in pixels
+            % according to the prescription outlined here:
+            % https://www.dropbox.com/s/w6l65mm77n8dau8/AMequivalentRectangleMeasuremts.pdf?dl=0
+            equivalentRectangleMeasurements(cellNum, frameNum, 3) = nthroot(mean(abs(eigenVals(cellNum, frameNum - ww: frameNum, 2)), 2) / mean(abs(eigenVals(cellNum, frameNum - ww: frameNum, 1)), 2), 2); % 'e': elongation factor (a/b)
+            equivalentRectangleMeasurements(cellNum, frameNum, 1) = nthroot((18 * mean(abs(eigenVals(cellNum, frameNum - ww: frameNum, 2)), 2) / equivalentRectangleMeasurements(cellNum, frameNum, 3)) , 4); % 'a': length along long axis
+            equivalentRectangleMeasurements(cellNum, frameNum, 2) = nthroot((18 * mean(abs(eigenVals(cellNum, frameNum - ww: frameNum, 1)), 2) / equivalentRectangleMeasurements(cellNum, frameNum, 3)) , 4); % 'b': length along short axis
+%             equivalentRectangleMeasurements(cellNum, frameNum, 2) = nthroot((18 * mean(abs(eigenVals(cellNum, frameNum - ww: frameNum, 1)), 2) / (equivalentRectangleMeasurements(cellNum, frameNum, 3) * equivalentRectangleMeasurements(cellNum, frameNum, 1)^2)) , 2); % 'b': length along short axis
+
+            % Create temporary variable to store extreme direction / elongation results
+            % for averaging this cell over the previous window-width ('ww')
+            % number of frames, and also specify this domain of frames.
             eD2 = NaN(2, ww + 1);
             eD2domain = frameNum - ww: frameNum;
+            
+            % Cycle through previous 'ww'/ window-width # of frames (for
+            % this cell only) and compute extreme directions for displaying
+            % this frame's window-averaged extreme elongations. 
             for wFrame = 1:length(eD2domain)
                 eVec = eigenVecs{cellNum, eD2domain(wFrame)};
-%                 a = abs([eVec(1, 2), eVec(2, 2), 0]);
-                a = real([eVec(1, 2), eVec(2, 2), 0]);
+                a = [eVec(1, 2), eVec(2, 2), 0];
                 b = [1, 0, 0];
                 eD2(1, wFrame) = atan2(norm(cross(a,b)), dot(a,b)) * (360/(2*pi)); 
-%                 c = abs([eVec(1, 1), eVec(2, 1), 0]);
-                c = real([eVec(1, 1), eVec(2, 1), 0]);
+                c = [eVec(1, 1), eVec(2, 1), 0];
                 d = [1, 0, 0];
                 eD2(2, wFrame) = atan2(norm(cross(c,d)), dot(c,d)) * (360/(2*pi));
-%                 eD2(1, wFrame) = atan2(eVec(1, 1), eVec(2, 1)) * (360/(2*pi)) + 90;
-%                 extremeDirections(cellNum, frameNum, 1) = atan2(eVec(1, 2), eVec(2, 2)) * (360/(2*pi)) + 90;
-%         %         extremeDirections(cellNum, frameNum, 2) = atan2(eVec(1, 1), eVec(2, 1)) * (360/(2*pi)) + 90;
             end
+            
+            % Average each cell's extreme directions over that cell's
+            % history over the previous window ('ww' #  of frames).
             extremeDirections(cellNum, frameNum, 1) = nanmean(eD2(1,:), 2);
             extremeDirections(cellNum, frameNum, 2) = nanmean(eD2(2,:), 2);
-%             extremeDirections(cellNum, frameNum, 1) = atan2(eVec(1, 1), eVec(2, 1)) * (360/(2*pi)) + 90;
-% %             extremeDirections(cellNum, frameNum, 1) = atan2(eVec(1, 2), eVec(2, 2)) * (360/(2*pi)) + 90;
         end
     end
 end
-% firstMaxFrame = find(maxOrientationAngles(1,:) == max(maxOrientationAngles(1,:)), 1, 'first');
-% firstMinFrame = find(maxOrientationAngles(2,:) == min(maxOrientationAngles(2,:)), 1, 'first');
-% meanPostMaxFrame = mean(maxOrientationAngles(1, firstMaxFrame:end));
-% meanPostMinFrame = mean(maxOrientationAngles(2, firstMinFrame:end));
-% 
-% cardinalAxesOffset = [meanPostMaxFrame, meanPostMinFrame];
 
-% filename = strcat('angle_vs_time_', version, '_frames_1_to_250.mat');
-% filename = strcat('angle_vs_time_', version, '.mat');
-% save(filename, 'theta_vs_time', 'angularMomenta', 'movieName', 'version', 'thetas', 'numFrames', 'max_combo_range', 'min_combo_range', 'maxOrientationAngles', 'cardinalAxesOffset');
-
-%% Sine-Fitting raw data (obsolete - SW 10/29/2019)
-% extreme_AngularMomenta = NaN(2, numFrames);
-% % extreme_Elongations = NaN(2, numFrames);
-% extreme_Elongation = NaN(1, numFrames);
-% 
-% ww = 10; % Window Width in units of frames
-% fitFunc = NaN(length(thetas), numFrames);
-% extreme_locations = NaN(2, numFrames); %% Line Max. Height (row 1) and Line of Min. Width (row 2) measurements
-% extreme_measurements = NaN(2, numFrames); %% Max. Height (row 1) and Min. Width (row 2) measurements
-% fit_offsets = NaN(2, numFrames); %% vertical (y) offset (row 1) and phase (phi) offset (row 2)
-% % sinfit = NaN(length(thetas));
-% 
-% for frameNum = 1:numFrames
-%     if frameNum <= ww
-% 
-%         bg_guess = mean(mean(theta_vs_time(:, 1:frameNum, 1), 2));
-%         
-%             dMax = max(mean(theta_vs_time(:, 1:frameNum, 1), 2));  % Max value in the data
-%             dMin = min(mean(theta_vs_time(:, 1:frameNum, 1), 2));  % Min value in the data
-%         
-%         A_guess = ( dMax - dMin ) / 2;
-%         omega_guess = 1;
-% 
-%             min_peak_location = min(thetas(fitFunc(:, frameNum) == dMax), thetas(fitFunc(:, frameNum) == dMin));
-%             max_peak_location = max(thetas(fitFunc(:, frameNum) == dMax), thetas(fitFunc(:, frameNum) == dMin));
-%             peak_separation = max_peak_location - min_peak_location;
-%             midpoint = min_peak_location + peak_separation / 2;
-%         
-%         phi_guess = abs(pi - midpoint);
-%         
-% %         guess = [bg_guess, A_guess, omega_guess, phi_guess];
-%         guess = [bg_guess A_guess phi_guess omega_guess];
-%         fix = [0 0 0 0];
-% %         lb = 
-% %         constrain = [lb ub];
-%         
-%         [sine_fit, fitFunc(:, frameNum)] = fitSine(thetas', mean(theta_vs_time(:, 1:frameNum, 1), 2), guess, fix);
-%         
-%         fit_offsets(1, frameNum) = sine_fit(1);
-%         fit_offsets(2, frameNum) = sine_fit(3) * 360 / (2*pi); %%% Phase offset in Degrees
-% %         fit_offsets(2, frameNum) = sine_fit(3); %%% Phase offset in Radians
-% 
-%             fMax = max(fitFunc(:, frameNum));
-%             fMin = min(fitFunc(:, frameNum));
-%         
-% %         extreme_locations(1, frameNum) = thetas(fitFunc(:, frameNum) == fMax) * 360 / (2*pi);
-% %         extreme_locations(2, frameNum) = thetas(fitFunc(:, frameNum) == fMin) * 360 / (2*pi);
-%         extreme_locations(1, frameNum) = sine_fit(3) * 360 / (2*pi);
-%         extreme_locations(2, frameNum) = (sine_fit(3) * 360 / (2*pi)) + 90;
-%         
-% % %         extreme_measurements(1, frameNum) = fMax;
-% % %         extreme_measurements(2, frameNum) = fMin;
-%         extreme_measurements(1, frameNum) = dMax;
-%         extreme_measurements(2, frameNum) = dMin;
-% % 
-% %         ellipseThetaInc = 5;
-% %         [~, ~, ~, ~, stdDevs] = ellipseStandard(dMax, dMin, ellipseThetaInc);
-% %         extreme_measurements(1, frameNum) = stdDevs(1);
-% %         extreme_measurements(2, frameNum) = stdDevs(2);
-%         
-%         
-%     else
-%         
-%         bg_guess = mean(mean(theta_vs_time(:, frameNum - ww: frameNum, 1), 2));
-%         
-%             dMax = max(mean(theta_vs_time(:, frameNum - ww: frameNum, 1), 2));  % Max value in the data
-%             dMin = min(mean(theta_vs_time(:, frameNum - ww: frameNum, 1), 2));  % Min value in the data
-%         
-%         A_guess = ( dMax - dMin ) / 2;
-%         omega_guess = 1;
-% 
-%             min_peak_location = min(thetas(fitFunc(:, frameNum) == dMax), thetas(fitFunc(:, frameNum) == dMin));
-%             max_peak_location = max(thetas(fitFunc(:, frameNum) == dMax), thetas(fitFunc(:, frameNum) == dMin));
-%             peak_separation = max_peak_location - min_peak_location;
-%             midpoint = min_peak_location + peak_separation / 2;
-%         
-%         phi_guess = abs(pi - midpoint);
-%         
-% %         guess = [bg_guess, A_guess, omega_guess, phi_guess];
-%         guess = [bg_guess A_guess phi_guess omega_guess];
-%         fix = [0 0 0 0];
-%         constrain = [];
-%         
-%         [sine_fit, fitFunc(:, frameNum)] = fitSine(thetas', mean(theta_vs_time(:, frameNum - ww: frameNum, 1), 2), guess, fix, constrain);
-%         
-%         fit_offsets(1, frameNum) = sine_fit(1);  %%% Background fit paramater
-%         fit_offsets(2, frameNum) = sine_fit(3) * 360 / (2*pi); %%% Phase offset in Degrees
-% %         fit_offsets(2, frameNum) = sine_fit(3); %%% Phase offset in Radians
-% 
-%             fMax = max(fitFunc(:, frameNum)); %% Max value of the fitted function
-%             fMin = min(fitFunc(:, frameNum)); %% Min value of the fitted function
-%         
-%         extreme_locations(1, frameNum) = sine_fit(3) * 360 / (2*pi);
-%         extreme_locations(2, frameNum) = (sine_fit(3) * 360 / (2*pi)) + 90;
-% %         extreme_locations(1, frameNum) = thetas(fitFunc(:, frameNum) == fMax) * 360 / (2*pi);
-% %         extreme_locations(2, frameNum) = thetas(fitFunc(:, frameNum) == fMin) * 360 / (2*pi);
-% %         extreme_locations(1, frameNum) = thetas(fitFunc(:, frameNum) == sine_fit(1) + sine_fit(2)) * 360 / (2*pi);
-% %         extreme_locations(2, frameNum) = thetas(fitFunc(:, frameNum) == sine_fit(1) - sine_fit(2)) * 360 / (2*pi);
-%         
-% % % %         extreme_measurements(1, frameNum) = fMax;
-% % % %         extreme_measurements(2, frameNum) = fMin;
-% % %         extreme_measurements(1, frameNum) = sine_fit(1) + sine_fit(2);
-% % %         extreme_measurements(2, frameNum) = sine_fit(1) - sine_fit(2);
-%         extreme_measurements(1, frameNum) = dMax;
-%         extreme_measurements(2, frameNum) = dMin;
-% %         ellipseThetaInc = 5;
-% %         
-% % %         [~, ~, ~, ~, extreme_measurements(1, frameNum)] = circleStandard(dMax, circleThetaInc);
-% % %         [~, ~, ~, ~, extreme_measurements(2, frameNum)] = circleStandard(dMin, circleThetaInc);
-% %         
-% % 
-% % %% Need to Load Actual PixelMap Data and use the maximum measurements in each direction as dMax and dMin, with the larger being max and smaller the min.
-% %        [~, ~, ~, ~, stdDevs] = ellipseStandard(dMax, dMin, ellipseThetaInc);
-% %        extreme_measurements(1, frameNum) = stdDevs(1);
-% %        extreme_measurements(2, frameNum) = stdDevs(2);
-%         
-%     end
-% end
-
-%% Find Cardinal Axes of Movie:
+%% Find cardinal axes of movie:
 cardinalAxesOffset = NaN(2, 1);
-% cardinalAxesOffset(1, 1) = mean(fit_offsets(2, :));
 cardinalAxesOffset(1, 1) = nanmean(nanmean(extremeDirections(:, :, 1), 1));
 
 if cardinalAxesOffset(1, 1) >= 90
@@ -269,20 +241,9 @@ end
 
 %% Master Save:
 filename = strcat('angle_vs_time_equivRectangle_', version, '.mat');
-% save(filename, 'theta_vs_time', 'angularMomenta', 'movieName', 'version', 'thetas', 'numFrames', 'fitFunc', 'extreme_locations', 'extreme_measurements', 'fit_offsets', 'cardinalAxesOffset');
 save(filename, 'theta_vs_time', 'angularMomenta', 'movieName', 'version', 'thetas', 'numFrames', 'equivalentRectangleMeasurements', 'extremeDirections', 'celAvgExtremeDirections', 'cardinalAxesOffset');
-%%% If file is too big to save, use following 2 lines in addition to above2
-% filename1 = strcat('angle_vs_time_', version, '_newSineFit2.mat');
-% save(filename1, 'theta_vs_time', 'angularMomenta', 'movieName', 'version', 'thetas', 'numFrames', 'fitFunc', 'extreme_locations', 'extreme_measurements', 'fit_offsets', 'cardinalAxesOffset', '-v7.3');
-% % filename2 = strcat('angle_vs_time_', version, '_Lonly_newSineFit1.mat');
-% % save(filename2, 'angularMomenta', '-v7.3');
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%%% Test Plots
-% figure(); plot(thetas', theta_vs_time(:, frameNum, 1)); hold on; plot(fourier_fit);
-% hold on; plot(thetas', fitFunc(:, frameNum));
-% hold on; scatter(thetas(fitFunc(:, frameNum) == fMax), fMax); hold on; scatter(thetas(fitFunc(:, frameNum) == fMin), fMin)
-% hold on; scatter(fit_offsets(2, frameNum), fit_offsets(1, frameNum))
+%% Plots (with alternate configuration options):
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%% PLOTS: %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -291,6 +252,10 @@ maxPlotTime = numFrames;
 timeInc = 1;
 
 suptitle({strcat('Movie: ', movieName, ' - Cardinal Axes: ', ' ', num2str(round(cardinalAxesOffset(1, 1), 1)), ' x ', ' ', num2str(round(cardinalAxesOffset(2, 1), 1)), ' degrees'), ''});
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Subplot #1 (with options):
 
 % fig10 = subplot(1,1,1);
 % imagesc([theta_vs_time(:, 1:timeInc:maxPlotTime, 1); theta_vs_time(:, 1:timeInc:maxPlotTime, 2)]);
@@ -327,19 +292,12 @@ mymap(1:end, 3) = [Atemp, linspace(Atemp(end-1), 0, 180)];
 mymap(1,1:3) = [0,0,0]; %%% (with zeros being black)
 mymap(2,1:3) = [0,0,0]; %%% (with near-zeros being black)
 
-
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-
-
-% figure();
-% fig_01 = subplot(1,1,1);
+%% Subplot #2:
 fig11 = subplot(4,1,2);
 % domain = 1:size(extreme_locations, 2);
 domain = 1:numFrames;
-
-% % plot(domain, extreme_locations(1,:), 'r', domain, extreme_locations(2,:), 'b');
 % plot(domain, nanmean(extremeDirections(:, :, 1), 1), 'r', domain, nanmean(extremeDirections(:, :, 2), 1), 'b');
 plot(domain, nanmean(extremeDirections(:, :, 1), 1), 'r');
 A = (thetas*360)/(2*pi);
@@ -351,10 +309,12 @@ ylabel('Angle (degrees)');
 % axes('xlim', [0 numFrames], 'ylim', [0 180], 'color', 'none',...
 % 'YTick',[], 'YAxisLocation', 'right')
 % xlabel('time (frames)');
-
 title(strcat('Maximum Angles of Rotation, movie: ', movieName));
 % legend('max', 'min');
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Subplot #3:
 fig12 = subplot(4,1,3);
 % plot(domain, extreme_measurements(1,:), 'r', domain, extreme_measurements(2,:), 'b');
 plot(domain, nanmean(equivalentRectangleMeasurements(:, :, 1), 1), 'r', domain, nanmean(equivalentRectangleMeasurements(:, :, 2), 1), 'b');
@@ -366,7 +326,10 @@ plot(domain, nanmean(equivalentRectangleMeasurements(:, :, 1), 1), 'r', domain, 
 ylabel('Length (pixels)');
 title(strcat('Equiv. Rectangle Measurements Extreme Angles, movie: ', movieName));
 legend('max', 'min');
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Subplot #4:
 fig13 = subplot(4,1,4);
 % plot(domain, extreme_measurements(1,:) ./ extreme_measurements(2,:), 'k');
 plot(domain, nanmean(equivalentRectangleMeasurements(:, :, 3), 1), 'k');
@@ -376,26 +339,17 @@ if strcmp(movieName, 'r4')
     ylim([0 4]);
 end
 title(strcat('Elongation at Extreme Angles, movie: ', movieName));
+
+%% As yet unsuccessful method to link all above subplots with a common time axis:
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % linkaxes([fig10 fig11 fig12 fig13],'xy');
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-% % numCells = size(ellipseProperties, 1);        %%% Plot all the cells
-% numCells = 231;                        %%% 1_wtYiActin_movie2 ONLY         %%% Number of cells to plot
-% 
-% fig11 = subplot(2,1,2);
-% imagesc(ellipseProperties(1:numCells, :, 4));
-% ylabel('Cell Index');
-% xlabel('time (frames)');
-% title('Oritentation Angles');
-% % cbh=colorbar('h');
-% % set(cbh,'YTick',['NaN', -90:30:90]);
-% colorbar;
-% colormap(gca,mymap);
-
-
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% %% Alternative to Subplot #2 (fig11) that instead plots RELATIVE orientation
+% %  angles, and also ignores cells that persist for < 5 frames:
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % tic
 % temp_percent_2 = 1;
 % maxPlotTime = numFrames;
@@ -460,6 +414,6 @@ title(strcat('Elongation at Extreme Angles, movie: ', movieName));
 % % set(cbh,'YTick',['NaN', -90:30:90]);
 % colorbar;
 % colormap(gca,mymap);
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 toc
